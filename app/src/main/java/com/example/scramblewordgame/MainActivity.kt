@@ -21,14 +21,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,23 +33,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.scramblewordgame.ui.theme.ScrambleWordGameTheme
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.random.Random
-import com.example.scramblewordgame.ui.theme.ScrambleWordGameTheme
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -63,11 +57,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             ScrambleWordGameTheme {
                 val scrambleViewModel: ScrambleViewModel = viewModel()
-                MyScreen(
+                HomeScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 20.dp),
-                    scrambleViewModel = scrambleViewModel
+                    viewModel = scrambleViewModel,
                 )
             }
         }
@@ -75,35 +69,84 @@ class MainActivity : ComponentActivity() {
 }
 
 data class ScrambleWord(val scrambleWord: String, val correctScramble: String)
+
 data class InputUiState(
     val count: Int = 0,
-    val scrambleWord: ScrambleWord = ScrambleWord("",""),
+    val scrambleWord: ScrambleWord = ScrambleWord("", ""),
     val score: Int = 0,
     val set: Set<String> = emptySet(),
-    var launchedEffect: Boolean = false
+    val textFieldValue: String = "",
 )
+
+sealed class Event {
+    data class OnSubmit(val textFieldValue: String, val scrambleWord: ScrambleWord) : Event()
+    data class ShowToast(val message: String) : Event()
+    data class OnTextFieldChange(val text: String) : Event()
+    data object OnResetState : Event()
+    data object OnSkip : Event()
+}
 
 @HiltViewModel
 class ScrambleViewModel @Inject constructor() : ViewModel() {
     private val _inputUiState = MutableStateFlow(InputUiState())
     val inputUiState = _inputUiState.asStateFlow()
 
+
     private val _sharedEvent = MutableSharedFlow<String>()
     val sharedEvent = _sharedEvent.asSharedFlow()
 
-    fun showToast(message: String){
-        viewModelScope.launch {
-            _sharedEvent.emit(message)
-        }
-    }
+
     init {
+        initialize()
+    }
+
+    private fun initialize() {
         viewModelScope.launch {
-            println("Houssein Chahine Entered inIt")
             updateScrambleWord()
         }
     }
 
-    fun updateSet(scrambleWord: ScrambleWord){
+    fun handleEvents(event: Event) {
+        when (event) {
+            is Event.OnSubmit -> {
+                updateSet(event.scrambleWord)
+                increaseCount()
+                if (event.textFieldValue == event.scrambleWord.correctScramble)
+                    updateScore()
+                updateScrambleWord()
+                onTextFieldClear()
+            }
+
+            is Event.OnSkip -> {
+                onTextFieldClear()
+                updateScrambleWord()
+            }
+
+            is Event.OnTextFieldChange -> onTextFieldChange(event.text)
+            is Event.ShowToast -> showToast(event.message)
+            is Event.OnResetState -> resetState()
+        }
+    }
+
+    private fun onTextFieldChange(message: String) {
+        _inputUiState.update {
+            it.copy(textFieldValue = message)
+        }
+    }
+
+    private fun onTextFieldClear() {
+        _inputUiState.update {
+            it.copy(textFieldValue = "")
+        }
+    }
+
+    private fun showToast(message: String) {
+        viewModelScope.launch {
+            _sharedEvent.emit(message)
+        }
+    }
+
+    private fun updateSet(scrambleWord: ScrambleWord) {
         _inputUiState.update {
             it.copy(
                 set = it.set + scrambleWord.correctScramble
@@ -111,15 +154,7 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    fun increaseCount() {
-        _inputUiState.update {
-            it.copy(
-                count = _inputUiState.value.count + 1
-            )
-        }
-    }
-
-    fun updateScore() {
+    private fun updateScore() {
         _inputUiState.update {
             it.copy(
                 score = _inputUiState.value.score + 20
@@ -127,43 +162,81 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    fun resetState(){
-        _inputUiState.value = InputUiState()
-    }
-
-    fun updateScrambleWord() {
-        val randomScrambleWord = getRandomScrambleWord(getSet())
-        if(_inputUiState.value.set.contains(randomScrambleWord.correctScramble)){
-            updateScrambleWord()
-        }
-        else{
+    private fun increaseCount() {
         _inputUiState.update {
             it.copy(
-                scrambleWord = ScrambleWord(randomScrambleWord.scrambleWord,randomScrambleWord.correctScramble)
+                count = _inputUiState.value.count + 1
             )
         }
     }
+
+    private fun resetState() {
+        _inputUiState.value = InputUiState()
+        initialize()
     }
+
+    private fun updateScrambleWord() {
+        val randomScrambleWord: ScrambleWord = getRandomScrambleWord(getSet())
+        if (_inputUiState.value.set.contains(randomScrambleWord.correctScramble)) {
+            updateScrambleWord()
+        } else {
+            _inputUiState.update {
+                it.copy(
+                    scrambleWord = ScrambleWord(
+                        randomScrambleWord.scrambleWord,
+                        randomScrambleWord.correctScramble
+                    )
+                )
+            }
+        }
+    }
+
 }
 
 @Composable
-fun MyScreen(modifier: Modifier, scrambleViewModel: ScrambleViewModel) {
-    val inputUiState by scrambleViewModel.inputUiState.collectAsStateWithLifecycle()
-    val count = inputUiState.count
-    val scramble = inputUiState.scrambleWord
-    val score = inputUiState.score
+fun HomeScreen(modifier: Modifier, viewModel: ScrambleViewModel) {
     val context = LocalContext.current
+    val inputUiState = viewModel.inputUiState.collectAsStateWithLifecycle()
 
-
-    var textValue by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    LaunchedEffect(scrambleViewModel.sharedEvent) {
-        scrambleViewModel.sharedEvent.collect{ message ->
-            Toast.makeText(context,message,Toast.LENGTH_LONG).show()
+    LaunchedEffect(viewModel.sharedEvent) {
+        viewModel.sharedEvent.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
+
+    MyScreen(
+        modifier = modifier,
+        inputUiState,
+        {
+            viewModel.handleEvents(
+                Event.OnSubmit(
+                    inputUiState.value.textFieldValue,
+                    inputUiState.value.scrambleWord
+                )
+            )
+        },
+        { viewModel.handleEvents(Event.OnSkip) },
+        { viewModel.handleEvents(Event.ShowToast("Game Over")) },
+        { viewModel.handleEvents(Event.OnResetState) },
+        { viewModel.handleEvents(Event.OnTextFieldChange(it)) },
+    )
+}
+
+@Composable
+fun MyScreen(
+    modifier: Modifier,
+    inputUiState: State<InputUiState>,
+    onSubmit: () -> Unit,
+    onSkip: () -> Unit,
+    showToast: () -> Unit,
+    onResetState: () -> Unit,
+    onTextFieldChange: (String) -> Unit,
+) {
+    val count = inputUiState.value.count
+    val scramble = inputUiState.value.scrambleWord
+    val score = inputUiState.value.score
+    val textFieldValue = inputUiState.value.textFieldValue
+
 
     Column(
         modifier = modifier,
@@ -173,9 +246,11 @@ fun MyScreen(modifier: Modifier, scrambleViewModel: ScrambleViewModel) {
         ), // Center and space components
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if(count >= 10){
-            DialogComponent(modifier = Modifier.fillMaxWidth(),{scrambleViewModel.showToast("Exit Game!")},
-                { scrambleViewModel.resetState() },score)
+        if (count >= 10) {
+            DialogComponent(
+                modifier = Modifier.fillMaxWidth(), { showToast() },
+                { onResetState() }, score
+            )
         }
 
         TitleComponent(modifier = Modifier.fillMaxWidth(), title = "Unscramble")
@@ -183,25 +258,20 @@ fun MyScreen(modifier: Modifier, scrambleViewModel: ScrambleViewModel) {
             modifier = Modifier.fillMaxWidth(),
             count = count,
             wordToGuess = scramble.scrambleWord,
-            value = textValue
+            value = textFieldValue
         ) {
-            textValue = it
+            onTextFieldChange(it)
         }
         Button(
             onClick = {
-                scrambleViewModel.updateSet(scramble)
-                scrambleViewModel.increaseCount()
-                if (textValue == scramble.correctScramble)
-                    scrambleViewModel.updateScore()
-                scrambleViewModel.updateScrambleWord()
-                textValue = ""
+                onSubmit()
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 10.dp),
             colors = ButtonDefaults.buttonColors(Color.Blue),
             shape = RoundedCornerShape(25.dp),
-            enabled = count < 10 && textValue.isNotEmpty(),
+            enabled = count < 10 && textFieldValue.isNotEmpty(),
         ) {
             Text(
                 text = "Submit",
@@ -212,8 +282,7 @@ fun MyScreen(modifier: Modifier, scrambleViewModel: ScrambleViewModel) {
         }
         Button(
             onClick = {
-                textValue = ""
-                scrambleViewModel.updateScrambleWord()
+                onSkip()
             },
             modifier = Modifier
                 .fillMaxWidth(),
@@ -250,14 +319,22 @@ fun TitleComponent(modifier: Modifier, title: String) {
 }
 
 @Composable
-fun DialogComponent(modifier: Modifier,onDismissButton : () -> Unit, onConfirmation : () -> Unit,score: Int){
+fun DialogComponent(
+    modifier: Modifier,
+    onDismissButton: () -> Unit,
+    onConfirmation: () -> Unit,
+    score: Int
+) {
     AlertDialog(
         modifier = modifier,
         title = {
             Text("The game is over", style = MaterialTheme.typography.headlineLarge)
         },
         text = {
-            Text(text = "Finally, you've completed the game successfully with a score of $score", style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = "Finally, you've completed the game successfully with a score of $score",
+                style = MaterialTheme.typography.bodySmall
+            )
         },
         onDismissRequest = {
 
@@ -274,6 +351,7 @@ fun DialogComponent(modifier: Modifier,onDismissButton : () -> Unit, onConfirmat
         }
     )
 }
+
 @Composable
 fun CardComponent(
     modifier: Modifier,
@@ -324,6 +402,7 @@ fun CardComponent(
                     .padding(10.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .border(1.dp, Color.Black, RoundedCornerShape(20.dp)),
+                maxLines = 1,
             )
         }
     }
@@ -343,17 +422,17 @@ fun shuffleString(input: String): String {
 
 fun getSet(): Set<ScrambleWord> {
     return setOf(
-        ScrambleWord(shuffleString("animal"),"animal"),
-        ScrambleWord(shuffleString("auto"),"auto"),
-        ScrambleWord(shuffleString("anecdote"),"anecdote"),
-        ScrambleWord(shuffleString("alphabet"),"alphabet"),
-        ScrambleWord(shuffleString("balloon"),"balloon"),
-        ScrambleWord(shuffleString("basket"),"basket"),
-        ScrambleWord(shuffleString("bench"),"bench"),
-        ScrambleWord(shuffleString("zoology"),"zoology"),
-        ScrambleWord(shuffleString("zeal"),"zeal"),
-        ScrambleWord(shuffleString("name"),"name"),
-        ScrambleWord(shuffleString("happy"),"happy"),
+        ScrambleWord(shuffleString("animal"), "animal"),
+        ScrambleWord(shuffleString("auto"), "auto"),
+        ScrambleWord(shuffleString("anecdote"), "anecdote"),
+        ScrambleWord(shuffleString("alphabet"), "alphabet"),
+        ScrambleWord(shuffleString("balloon"), "balloon"),
+        ScrambleWord(shuffleString("basket"), "basket"),
+        ScrambleWord(shuffleString("bench"), "bench"),
+        ScrambleWord(shuffleString("zoology"), "zoology"),
+        ScrambleWord(shuffleString("zeal"), "zeal"),
+        ScrambleWord(shuffleString("name"), "name"),
+        ScrambleWord(shuffleString("happy"), "happy"),
     )
 }
 
