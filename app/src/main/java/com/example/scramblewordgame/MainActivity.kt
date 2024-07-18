@@ -97,7 +97,9 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
 
 
     init {
+        viewModelScope.launch {
         initialize()
+        }
     }
 
     private fun initialize() {
@@ -107,6 +109,7 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
     }
 
     fun handleEvents(event: Event) {
+        viewModelScope.launch {
         when (event) {
             is Event.OnSubmit -> {
                 updateSet(event.scrambleWord)
@@ -126,6 +129,7 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
             is Event.ShowToast -> showToast(event.message)
             is Event.OnResetState -> resetState()
         }
+    }
     }
 
     private fun onTextFieldChange(message: String) {
@@ -175,21 +179,14 @@ class ScrambleViewModel @Inject constructor() : ViewModel() {
         initialize()
     }
 
-    private fun updateScrambleWord() {
-        val randomScrambleWord: ScrambleWord = getRandomScrambleWord(getSet())
-        if (_inputUiState.value.set.contains(randomScrambleWord.correctScramble)) {
-            updateScrambleWord()
-        } else {
-            _inputUiState.update {
-                it.copy(
-                    scrambleWord = ScrambleWord(
-                        randomScrambleWord.scrambleWord,
-                        randomScrambleWord.correctScramble
-                    )
-                )
-            }
+    private fun updateScrambleWord(){
+        val randomScrambleWord: ScrambleWord = getRandomScrambleWord(_inputUiState.value.set)
+
+        _inputUiState.update {
+            it.copy(scrambleWord = randomScrambleWord)
         }
     }
+
 
 }
 
@@ -420,6 +417,17 @@ fun shuffleString(input: String): String {
 }
 
 
+
+fun getRandomScrambleWord(excludeSet: Set<String>): ScrambleWord {
+    val allScrambleWords = getSet()
+
+    // Filter out scramble words that are already in the excludeSet
+    val availableWords = allScrambleWords.filterNot { it.correctScramble in excludeSet }
+
+    // Return a random word from the available words
+    return availableWords.random()
+}
+
 fun getSet(): Set<ScrambleWord> {
     return setOf(
         ScrambleWord(shuffleString("animal"), "animal"),
@@ -434,8 +442,4 @@ fun getSet(): Set<ScrambleWord> {
         ScrambleWord(shuffleString("name"), "name"),
         ScrambleWord(shuffleString("happy"), "happy"),
     )
-}
-
-fun getRandomScrambleWord(scrambleWords: Set<ScrambleWord>): ScrambleWord {
-    return scrambleWords.random()
 }
